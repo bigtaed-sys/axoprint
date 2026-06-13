@@ -101,6 +101,12 @@ public class RelayEndToEndTests : IClassFixture<RelayFactory>
         Assert.Contains("two-sided-long-edge", pg["sides-supported"]!.AsStrings());
         // media-col-database must decode as a 1setOf collections.
         Assert.True(pg["media-col-database"]!.Values.Count >= 2);
+        // IPP Everywhere raster/URF capabilities required for driverless install.
+        Assert.NotNull(pg["urf-supported"]);
+        Assert.NotNull(pg["pwg-raster-document-type-supported"]);
+        Assert.NotNull(pg["pwg-raster-document-resolution-supported"]);
+        Assert.Contains("image/urf", pg["document-format-supported"]!.AsStrings());
+        Assert.NotNull(pg["printer-device-id"]);
     }
 
     [Fact]

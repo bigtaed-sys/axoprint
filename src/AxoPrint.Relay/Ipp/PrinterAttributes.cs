@@ -65,13 +65,30 @@ public static class PrinterAttributes
         A(IppAttribute.Language("natural-language-configured", "en"));
         A(IppAttribute.Language("generated-natural-language-supported", "en"));
 
+        // Windows prefers PDF when offered, so it stays the default/spool format
+        // even though we also advertise the mandatory IPP Everywhere raster
+        // formats (PWG Raster / URF) required for the driverless install to validate.
         A(IppAttribute.Mime("document-format-default", "application/pdf"));
         A(IppAttribute.Mime("document-format-supported",
-            "application/pdf", "image/pwg-raster", "image/jpeg", "application/octet-stream"));
+            "application/pdf", "image/pwg-raster", "image/urf", "image/jpeg", "application/octet-stream"));
         A(IppAttribute.Keyword("pdl-override-supported", "attempted"));
         A(IppAttribute.Keyword("compression-supported", "none"));
         A(IppAttribute.Boolean("color-supported", printer.Color));
         A(IppAttribute.Boolean("multiple-document-jobs-supported", false));
+        A(IppAttribute.TextW("printer-device-id",
+            $"MFG:AxoPrint;MDL:{printer.DisplayName};CMD:PDF,PWGRaster,URF;CLS:PRINTER;"));
+
+        // PWG Raster capabilities — required because image/pwg-raster is advertised.
+        A(new IppAttribute("pwg-raster-document-resolution-supported",
+            IppValue.Resolution(IppResolution.Dpi(300)), IppValue.Resolution(IppResolution.Dpi(600))));
+        A(IppAttribute.Keyword("pwg-raster-document-type-supported",
+            "black_1", "sgray_8", "srgb_8"));
+        A(IppAttribute.Keyword("pwg-raster-document-sheet-back", "normal"));
+
+        // URF capabilities — required because image/urf is advertised (AirPrint/Mopria).
+        A(IppAttribute.Keyword("urf-supported",
+            "CP1", "IS1", "MT1-2-3-4-5-6", "OB10", "PQ4", "RS300-600",
+            "SRGB24", "V1.4", "W8", "DM1"));
 
         A(IppAttribute.Keyword("job-creation-attributes-supported",
             "copies", "sides", "media", "media-col", "print-color-mode",

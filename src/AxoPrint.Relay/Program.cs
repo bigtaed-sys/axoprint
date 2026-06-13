@@ -22,6 +22,29 @@ var app = builder.Build();
 
 const string IppContentType = "application/ipp";
 
+// Log every request that touches the IPP path (method, status, content-type,
+// user-agent) so we can see exactly what the Windows IPP client does. The token
+// in the path is truncated.
+var ippLog = app.Logger;
+app.Use(async (ctx, next) =>
+{
+    bool isIpp = ctx.Request.Path.StartsWithSegments("/ipp");
+    if (isIpp)
+    {
+        string path = ctx.Request.Path.Value ?? "";
+        // /ipp/<token>/printers/<queue> → mask the token segment.
+        var parts = path.Split('/');
+        if (parts.Length > 2 && parts[2].Length > 6) parts[2] = parts[2][..6] + "…";
+        ippLog.LogInformation("IPP → {Method} {Path} ua=\"{UA}\" ct={CT}",
+            ctx.Request.Method, string.Join('/', parts),
+            ctx.Request.Headers.UserAgent.ToString(),
+            ctx.Request.ContentType ?? "-");
+    }
+    await next();
+    if (isIpp)
+        ippLog.LogInformation("IPP ← {Status} {CT}", ctx.Response.StatusCode, ctx.Response.ContentType ?? "-");
+});
+
 // ----- Status page -------------------------------------------------------
 app.MapGet("/", (PrinterRegistry reg) =>
 {
@@ -66,6 +89,16 @@ app.MapPost("/ipp/{token}/printers/{queue}", async (
     ctx.Response.ContentType = IppContentType;
     await ctx.Response.Body.WriteAsync(IppWriter.Encode(response), ct);
     return Results.Empty;
+});
+
+// Some IPP clients probe the printer URI with a GET before sending IPP; answer
+// 200 so they don't conclude the printer is missing.
+app.MapMethods("/ipp/{token}/printers/{queue}", new[] { "GET", "HEAD" }, (
+    string token, string queue, TokenAuth auth) =>
+{
+    if (!auth.IsValid(token))
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    return Results.Text($"AxoPrint IPP printer: {queue}", "text/plain");
 });
 
 // ----- Sender setup API: list printers to add to Windows -----------------
