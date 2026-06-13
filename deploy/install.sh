@@ -142,7 +142,9 @@ if command -v restorecon >/dev/null 2>&1; then
 fi
 
 systemctl daemon-reload
-systemctl enable --now "$SERVICE"
+systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+# restart (not just start) so a rewritten token/env is always applied.
+systemctl restart "$SERVICE"
 
 # --------------------------------------------------------------- 5. Caddy
 if ! command -v caddy >/dev/null 2>&1; then
