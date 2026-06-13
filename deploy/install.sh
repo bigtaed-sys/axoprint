@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# AxoPrint relay installer — run this ON your Debian server, from the repo root.
+# AxoPrint relay installer — run this ON your server, from the repo root.
+# Supports Debian/Ubuntu (apt) and AlmaLinux/RHEL/Rocky/Fedora (dnf).
 #
 #   git clone https://github.com/bigtaed-sys/axoprint.git
 #   cd axoprint
@@ -12,7 +13,7 @@
 #   3. Creates a systemd service (axoprint-relay) listening on 127.0.0.1.
 #   4. Installs Caddy (if missing) and configures it as a TLS reverse proxy
 #      for your domain (automatic Let's Encrypt certificate).
-#   5. Enables and starts everything, then prints the URL and token.
+#   5. Opens the firewall, handles SELinux, starts everything, prints URL + token.
 #
 # Prerequisites:
 #   - A domain (DNS A/AAAA record) pointing at this server.
@@ -40,7 +41,6 @@ if [[ "$(id -u)" -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
 fi
 
-# Repo root = parent of this script's directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RELAY_PROJECT="$REPO_ROOT/src/AxoPrint.Relay"
@@ -50,7 +50,6 @@ if [[ ! -d "$RELAY_PROJECT" ]]; then
     exit 1
 fi
 
-# Generate a token if none was supplied.
 if [[ -z "$TOKEN" ]]; then
     TOKEN="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)"
     GENERATED_TOKEN=1
@@ -60,28 +59,41 @@ fi
 
 log() { echo -e "\n\033[1;34m==>\033[0m \033[1m$*\033[0m"; }
 
+# ----------------------------------------------------- detect package family
+RPM=""
+if command -v apt-get >/dev/null 2>&1; then
+    FAMILY="debian"
+elif command -v dnf >/dev/null 2>&1; then
+    FAMILY="rhel"; RPM="dnf"
+elif command -v yum >/dev/null 2>&1; then
+    FAMILY="rhel"; RPM="yum"
+else
+    echo "Unsupported distro: need apt-get or dnf/yum." >&2
+    exit 1
+fi
+echo "Detected package family: $FAMILY"
+
 # ---------------------------------------------------------- 1. dependencies
 log "Installing base packages"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq curl ca-certificates gnupg apt-transport-https libicu-dev openssl >/dev/null
+if [[ "$FAMILY" == "debian" ]]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq curl ca-certificates gnupg apt-transport-https libicu-dev openssl >/dev/null
+else
+    "$RPM" install -y -q curl ca-certificates gnupg2 libicu openssl >/dev/null
+fi
 
 # ------------------------------------------------------------- 2. .NET SDK
-need_dotnet=1
-if command -v dotnet >/dev/null 2>&1; then
-    if dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then need_dotnet=0; fi
-fi
-if [[ -x "$DOTNET_DIR/dotnet" ]] && "$DOTNET_DIR/dotnet" --list-sdks 2>/dev/null | grep -q '^10\.'; then
-    DOTNET="$DOTNET_DIR/dotnet"; need_dotnet=0
-fi
-
-if [[ "$need_dotnet" -eq 1 ]]; then
+DOTNET=""
+if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then
+    DOTNET="$(command -v dotnet)"
+elif [[ -x "$DOTNET_DIR/dotnet" ]] && "$DOTNET_DIR/dotnet" --list-sdks 2>/dev/null | grep -q '^10\.'; then
+    DOTNET="$DOTNET_DIR/dotnet"
+else
     log "Installing .NET 10 SDK into $DOTNET_DIR"
     curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
     bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$DOTNET_DIR"
     DOTNET="$DOTNET_DIR/dotnet"
-else
-    DOTNET="${DOTNET:-$(command -v dotnet || echo "$DOTNET_DIR/dotnet")}"
 fi
 echo "Using dotnet: $DOTNET ($("$DOTNET" --version))"
 
@@ -89,8 +101,7 @@ echo "Using dotnet: $DOTNET ($("$DOTNET" --version))"
 log "Building the relay (self-contained linux-x64) → $APP_DIR"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 rm -rf "$APP_DIR"
-"$DOTNET" publish "$RELAY_PROJECT" -c Release -r linux-x64 --self-contained \
-    -p:PublishSingleFile=false -o "$APP_DIR"
+"$DOTNET" publish "$RELAY_PROJECT" -c Release -r linux-x64 --self-contained -o "$APP_DIR"
 chmod +x "$APP_DIR/AxoPrint.Relay"
 
 # ----------------------------------------------------------- 4. systemd unit
@@ -125,22 +136,34 @@ ProtectHome=true
 WantedBy=multi-user.target
 UNIT
 
+# SELinux (AlmaLinux/RHEL): give the relay binary the right exec context.
+if command -v restorecon >/dev/null 2>&1; then
+    restorecon -RF "$APP_DIR" 2>/dev/null || true
+fi
+
 systemctl daemon-reload
 systemctl enable --now "$SERVICE"
 
 # --------------------------------------------------------------- 5. Caddy
 if ! command -v caddy >/dev/null 2>&1; then
     log "Installing Caddy"
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-        | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-        > /etc/apt/sources.list.d/caddy-stable.list
-    apt-get update -qq
-    apt-get install -y -qq caddy >/dev/null
+    if [[ "$FAMILY" == "debian" ]]; then
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+            | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+            > /etc/apt/sources.list.d/caddy-stable.list
+        apt-get update -qq
+        apt-get install -y -qq caddy >/dev/null
+    else
+        # Caddy's official RPM repo (works on AlmaLinux/RHEL/Rocky/Fedora).
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/setup.rpm.sh' | bash
+        "$RPM" install -y -q caddy >/dev/null
+    fi
 fi
 
 log "Configuring Caddy for https://$DOMAIN"
 CADDYFILE="/etc/caddy/Caddyfile"
+mkdir -p /etc/caddy
 if [[ -f "$CADDYFILE" ]] && ! grep -q "# axoprint:$DOMAIN" "$CADDYFILE"; then
     cp "$CADDYFILE" "$CADDYFILE.bak.$(date +%s)"
     echo "  (backed up existing Caddyfile)"
@@ -155,12 +178,25 @@ $DOMAIN {
 	encode zstd gzip
 }
 CADDY
-systemctl reload caddy || systemctl restart caddy
+
+# SELinux: allow Caddy (and confined services) to make the local proxy connection.
+if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce)" == "Enforcing" ]]; then
+    log "SELinux enforcing — allowing outbound HTTP proxy connections"
+    setsebool -P httpd_can_network_connect 1 2>/dev/null || true
+fi
+
+systemctl enable caddy >/dev/null 2>&1 || true
+systemctl reload caddy 2>/dev/null || systemctl restart caddy
 
 # ------------------------------------------------------------- 6. firewall
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+    log "Opening ports 80/443 in firewalld"
+    firewall-cmd --permanent --add-service=http  >/dev/null || true
+    firewall-cmd --permanent --add-service=https >/dev/null || true
+    firewall-cmd --reload >/dev/null || true
+elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     log "Opening ports 80/443 in ufw"
-    ufw allow 80/tcp >/dev/null || true
+    ufw allow 80/tcp  >/dev/null || true
     ufw allow 443/tcp >/dev/null || true
 fi
 
