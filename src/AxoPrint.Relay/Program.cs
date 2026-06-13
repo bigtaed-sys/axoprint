@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Integrate with systemd (Type=notify, journald logging) when run as a service.
+builder.Host.UseSystemd();
+
 builder.Services.AddSingleton<TokenAuth>();
 builder.Services.AddSingleton<PrinterRegistry>();
 builder.Services.AddSingleton<JobStore>();
