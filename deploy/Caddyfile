@@ -1,0 +1,13 @@
+# AxoPrint relay behind Caddy. Caddy obtains and renews a Let's Encrypt
+# certificate automatically. Replace the domain with your own.
+
+print.example.com {
+	reverse_proxy 127.0.0.1:5080
+
+	# Print jobs can be large; raise if you print big documents.
+	request_body {
+		max_size 512MB
+	}
+
+	encode zstd gzip
+}

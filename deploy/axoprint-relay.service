@@ -1,0 +1,29 @@
+[Unit]
+Description=AxoPrint relay (remote print service)
+After=network.target
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/axoprint
+ExecStart=/usr/bin/dotnet /opt/axoprint/AxoPrint.Relay.dll
+Restart=always
+RestartSec=5
+
+# Listen on loopback only; TLS is terminated by the reverse proxy (Caddy/nginx).
+Environment=ASPNETCORE_URLS=http://127.0.0.1:5080
+Environment=DOTNET_ENVIRONMENT=Production
+
+# ---- EDIT THESE ----
+Environment=AXO__TOKEN=change-me-to-a-long-random-secret
+Environment=AXO__BASEURI=https://print.example.com
+Environment=AXO__DATADIR=/var/lib/axoprint
+
+# Hardening
+DynamicUser=true
+StateDirectory=axoprint
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

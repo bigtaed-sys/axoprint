@@ -1,0 +1,49 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:AxoPrint.Agent"
+        mc:Ignorable="d" d:DesignWidth="560" d:DesignHeight="560"
+        x:Class="AxoPrint.Agent.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Width="560" Height="560"
+        Title="AxoPrint Agent">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="16" RowSpacing="12">
+
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="AxoPrint Agent" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding StatusText}" Foreground="#2563EB" FontWeight="SemiBold" />
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12">
+            <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Relay URL" VerticalAlignment="Center" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding RelayBaseUrl}"
+                         PlaceholderText="https://print.example.com" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Token" VerticalAlignment="Center" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Token}" PasswordChar="•" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="SumatraPDF" VerticalAlignment="Center" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding SumatraPath}"
+                         PlaceholderText="(auto-detect if empty)" />
+
+                <Button Grid.Row="3" Grid.Column="1" Content="Save &amp; Reconnect"
+                        HorizontalAlignment="Left" Click="OnSaveClick" />
+
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SaveHint}"
+                           Foreground="#22A06B" FontSize="12" />
+            </Grid>
+        </Border>
+
+        <TextBlock Grid.Row="2" Text="Activity" FontWeight="SemiBold" />
+
+        <Border Grid.Row="3" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6">
+            <ScrollViewer Padding="8">
+                <TextBlock Text="{Binding Log}" FontFamily="Cascadia Code,Consolas,monospace"
+                           FontSize="12" TextWrapping="Wrap" />
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:AxoPrint.Setup"
+        mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="600"
+        x:Class="AxoPrint.Setup.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Width="600" Height="600"
+        Title="AxoPrint — Add Remote Printers">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="16" RowSpacing="12">
+
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="AxoPrint" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Add your remote printers to Windows" Opacity="0.7" />
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12">
+            <Grid ColumnDefinitions="100,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Relay URL" VerticalAlignment="Center" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding RelayBaseUrl}"
+                         PlaceholderText="https://print.example.com" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Token" VerticalAlignment="Center" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Token}" PasswordChar="•" />
+
+                <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="2" Content="Connect"
+                        VerticalAlignment="Stretch" Padding="16,0"
+                        IsEnabled="{Binding NotBusy}" Click="OnConnectClick" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6">
+            <ListBox ItemsSource="{Binding Printers}" Background="Transparent">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PrinterRow">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                            <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="1">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding StatusLabel}" FontSize="12" Opacity="0.7" />
+                                <TextBlock Text="{Binding Url}" FontSize="11" Opacity="0.5" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <Button Grid.Row="3" Content="Add selected to Windows" HorizontalAlignment="Left"
+                IsEnabled="{Binding NotBusy}" Click="OnAddClick" />
+
+        <TextBlock Grid.Row="4" Text="{Binding Status}" TextWrapping="Wrap" Foreground="#2563EB" />
+    </Grid>
+</Window>
