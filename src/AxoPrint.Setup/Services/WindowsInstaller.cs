@@ -1,90 +1,73 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.ComponentModel;
 using System.Drawing.Printing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace AxoPrint.Setup.Services;
 
 /// <summary>
-/// Adds/removes printers in Windows that point at the relay over IPP, using
-/// the in-box "Microsoft IPP Class Driver" (no vendor driver required).
+/// Adds/removes IPP printers in Windows that point at the relay, using the
+/// spooler API <c>AddPrinterConnection2</c> in driverless mode — the same path
+/// the "Select a shared printer by name" wizard uses. Windows negotiates the
+/// in-box "Microsoft IPP Class Driver" from the relay's IPP attributes, so no
+/// vendor driver and no printer port need to be created manually.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class WindowsInstaller
 {
-    private const string Driver = "Microsoft IPP Class Driver";
+    // PRINTER_CONNECTION_INFO_1 flags (winspool.h).
+    private const uint PRINTER_CONNECTION_NO_UI = 0x00000040;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct PrinterConnectionInfo1
+    {
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? pszDriverName;
+    }
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "AddPrinterConnection2W")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AddPrinterConnection2(
+        IntPtr hWnd, string pszName, uint dwLevel, ref PrinterConnectionInfo1 pConnectionInfo);
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "DeletePrinterConnectionW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeletePrinterConnection(string pName);
 
     public static IReadOnlySet<string> InstalledPrinterNames() =>
         PrinterSettings.InstalledPrinters.Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Adds the printer by its IPP URL. Driverless (pszDriverName = null) so the
+    /// spooler pulls the IPP Class Driver via Get-Printer-Attributes from the relay.
+    /// </summary>
     public static Task<(bool Ok, string Output)> AddPrinterAsync(
-        string displayName, string url, CancellationToken ct)
+        string displayName, string url, CancellationToken ct) => Task.Run(() =>
     {
-        // Variables are defined first (safely quoted) so the script body can be
-        // a plain raw string with the literal braces PowerShell if/else needs.
-        string vars =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$name = " + PsString(displayName) + "\n" +
-            "$url = " + PsString(url) + "\n" +
-            "$driver = " + PsString(Driver) + "\n";
-
-        const string body = """
-            if (-not (Get-PrinterPort -Name $url -ErrorAction SilentlyContinue)) {
-                Add-PrinterPort -Name $url
-            }
-            if (Get-Printer -Name $name -ErrorAction SilentlyContinue) {
-                Set-Printer -Name $name -PortName $url
-            } else {
-                Add-Printer -Name $name -DriverName $driver -PortName $url
-            }
-            Write-Output "OK: $name -> $url"
-            """;
-        return RunPowerShellAsync(vars + body, ct);
-    }
-
-    public static Task<(bool Ok, string Output)> RemovePrinterAsync(string displayName, CancellationToken ct)
-    {
-        string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "$name = " + PsString(displayName) + "\n" +
-            "Remove-Printer -Name $name -ErrorAction SilentlyContinue\n" +
-            "Write-Output \"Removed: $name\"\n";
-        return RunPowerShellAsync(script, ct);
-    }
-
-    private static async Task<(bool Ok, string Output)> RunPowerShellAsync(string script, CancellationToken ct)
-    {
-        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-        var psi = new ProcessStartInfo
+        var info = new PrinterConnectionInfo1
         {
-            FileName = "powershell.exe",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
+            dwFlags = PRINTER_CONNECTION_NO_UI,
+            pszDriverName = null,
         };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-NonInteractive");
-        psi.ArgumentList.Add("-ExecutionPolicy");
-        psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-EncodedCommand");
-        psi.ArgumentList.Add(encoded);
 
-        using var proc = new Process { StartInfo = psi };
-        proc.Start();
-        string stdout = await proc.StandardOutput.ReadToEndAsync(ct);
-        string stderr = await proc.StandardError.ReadToEndAsync(ct);
-        await proc.WaitForExitAsync(ct);
+        if (AddPrinterConnection2(IntPtr.Zero, url, 1, ref info))
+            return (true, $"OK: {displayName}");
 
-        string output = (stdout + stderr).Trim();
-        return (proc.ExitCode == 0, output);
-    }
+        int code = Marshal.GetLastWin32Error();
+        return (false, $"0x{code:X8}: {new Win32Exception(code).Message} (url: {url})");
+    }, ct);
 
-    /// <summary>Quotes a value as a single-quoted PowerShell string literal.</summary>
-    private static string PsString(string value) => "'" + value.Replace("'", "''") + "'";
+    public static Task<(bool Ok, string Output)> RemovePrinterAsync(
+        string url, CancellationToken ct) => Task.Run(() =>
+    {
+        if (DeletePrinterConnection(url))
+            return (true, "removed");
+        int code = Marshal.GetLastWin32Error();
+        return (false, $"0x{code:X8}: {new Win32Exception(code).Message}");
+    }, ct);
 }
