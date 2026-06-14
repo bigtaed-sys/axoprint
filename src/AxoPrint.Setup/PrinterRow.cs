@@ -19,6 +19,12 @@ public sealed class PrinterRow : INotifyPropertyChanged
     private bool _agentOnline;
     public bool AgentOnline { get => _agentOnline; set { Set(ref _agentOnline, value); OnPropertyChanged(nameof(StatusLabel)); } }
 
+    private bool _duplex;
+    public bool Duplex { get => _duplex; set => Set(ref _duplex, value); }
+
+    private bool _monochrome;
+    public bool Monochrome { get => _monochrome; set => Set(ref _monochrome, value); }
+
     public string StatusLabel =>
         (Installed ? "✓ installed" : "not installed") + (AgentOnline ? "" : " · agent offline");
 

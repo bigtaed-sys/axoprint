@@ -86,7 +86,7 @@ public sealed class Uploader(SetupConfig config)
 
             try
             {
-                await api.PrintAsync(queueId, file, ct);
+                await api.PrintAsync(queueId, file, config.OptionsFor(queueId), ct);
                 TryDelete(file);
                 Log?.Invoke($"Sent print job to \"{queueId}\".");
             }

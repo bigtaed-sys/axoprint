@@ -104,7 +104,7 @@ app.MapMethods("/ipp/{token}/printers/{queue}", new[] { "GET", "HEAD" }, (
 // ----- Sender print API: submit a PDF for a queue (used by the client) ---
 app.MapPost("/api/print/{queueId}", async (
     string queueId, HttpContext ctx, TokenAuth auth, PrinterRegistry reg, JobStore jobs,
-    string? jobName, int? copies, CancellationToken ct) =>
+    string? jobName, int? copies, bool? duplex, bool? color, CancellationToken ct) =>
 {
     if (!auth.IsValidBearer(ctx.Request.Headers.Authorization))
         return Results.Unauthorized();
@@ -112,7 +112,7 @@ app.MapPost("/api/print/{queueId}", async (
         return Results.NotFound(new { error = "unknown queue" });
 
     var job = jobs.Create(queueId, jobName ?? "Document", "", "application/pdf",
-        Math.Clamp(copies ?? 1, 1, 999), duplex: false, color: true, media: "");
+        Math.Clamp(copies ?? 1, 1, 999), duplex: duplex ?? false, color: color ?? true, media: "");
 
     await using (var f = File.Create(jobs.DocumentPath(job.Id)))
         await ctx.Request.Body.CopyToAsync(f, ct);

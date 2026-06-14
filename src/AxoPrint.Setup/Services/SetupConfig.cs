@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -12,6 +13,20 @@ public sealed class SetupConfig
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(RelayBaseUrl) && !string.IsNullOrWhiteSpace(Token);
+
+    /// <summary>Per-printer output options, keyed by queue id. Note: these are
+    /// fixed per AxoPrint printer (the Windows print dialog's settings can't be
+    /// recovered from a flattened PDF).</summary>
+    public Dictionary<string, PrinterOptions> Printers { get; set; } = new();
+
+    public PrinterOptions OptionsFor(string queueId) =>
+        Printers.TryGetValue(queueId, out var o) ? o : new PrinterOptions();
+
+    public void SetOptions(string queueId, PrinterOptions options)
+    {
+        Printers[queueId] = options;
+        Save();
+    }
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
@@ -45,4 +60,10 @@ public sealed class SetupConfig
         Directory.CreateDirectory(DefaultDir);
         File.WriteAllText(DefaultPath, JsonSerializer.Serialize(this, JsonOpts));
     }
+}
+
+public sealed class PrinterOptions
+{
+    public bool Duplex { get; set; }
+    public bool Monochrome { get; set; }
 }

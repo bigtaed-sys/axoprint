@@ -29,7 +29,7 @@ public sealed class RelayApi(SetupConfig config)
     }
 
     /// <summary>Uploads a spooled PDF to the relay as a print job for the queue.</summary>
-    public async Task PrintAsync(string queueId, string filePath, CancellationToken ct)
+    public async Task PrintAsync(string queueId, string filePath, PrinterOptions options, CancellationToken ct)
     {
         using var http = Http();
         await using var fs = File.OpenRead(filePath);
@@ -37,7 +37,10 @@ public sealed class RelayApi(SetupConfig config)
         content.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
 
         string jobName = Uri.EscapeDataString($"Print {DateTime.Now:HH:mm:ss}");
-        var resp = await http.PostAsync($"api/print/{queueId}?jobName={jobName}", content, ct);
+        string query = $"jobName={jobName}" +
+            $"&duplex={(options.Duplex ? "true" : "false")}" +
+            $"&color={(options.Monochrome ? "false" : "true")}";
+        var resp = await http.PostAsync($"api/print/{queueId}?{query}", content, ct);
         resp.EnsureSuccessStatusCode();
     }
 }

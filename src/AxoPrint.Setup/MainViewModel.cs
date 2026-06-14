@@ -79,14 +79,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Printers.Clear();
             foreach (var p in items)
             {
-                Printers.Add(new PrinterRow
+                var opt = _config.OptionsFor(p.QueueId);
+                var row = new PrinterRow
                 {
                     QueueId = p.QueueId,
                     DisplayName = p.DisplayName,
                     Url = p.Url,
                     Installed = installed.Contains(WindowsInstaller.PrinterName(p.DisplayName)),
                     AgentOnline = p.AgentOnline,
-                });
+                    Duplex = opt.Duplex,
+                    Monochrome = opt.Monochrome,
+                };
+                row.PropertyChanged += OnRowOptionChanged;
+                Printers.Add(row);
             }
 
             Status = items.Count == 0
@@ -145,6 +150,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             Busy = false;
         }
+    }
+
+    private void OnRowOptionChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not PrinterRow row) return;
+        if (e.PropertyName is nameof(PrinterRow.Duplex) or nameof(PrinterRow.Monochrome))
+            _config.SetOptions(row.QueueId, new PrinterOptions { Duplex = row.Duplex, Monochrome = row.Monochrome });
     }
 
     private void AppendLog(string line)
