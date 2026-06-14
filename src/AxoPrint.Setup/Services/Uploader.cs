@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,41 +8,82 @@ namespace AxoPrint.Setup.Services;
 
 /// <summary>
 /// Watches the spool folder for PDFs produced by the local printers and
-/// forwards each to the relay as a print job for its queue (the file name is
-/// the queue id). Polls on a short interval so it never misses a file.
+/// forwards each to the relay as a print job for its queue.
+///
+/// Each printer writes to a fixed port file (&lt;queueId&gt;.pdf). To avoid a job
+/// being overwritten by the next one, a completed port file is immediately
+/// "picked up" — moved to a uniquely-named file in a pickup subfolder — and
+/// only then uploaded (with retries). A FileSystemWatcher makes pickup near
+/// instant; a poll loop is the backstop.
 /// </summary>
 public sealed class Uploader(SetupConfig config)
 {
     public event Action<string>? Log;
 
+    private static string Root => SetupConfig.SpoolDir;
+    private static string PickupDir => Path.Combine(SetupConfig.SpoolDir, "queue");
+    private const string Sep = "__";
+
     public async Task RunAsync(CancellationToken ct)
     {
-        Directory.CreateDirectory(SetupConfig.SpoolDir);
+        Directory.CreateDirectory(Root);
+        Directory.CreateDirectory(PickupDir);
         var api = new RelayApi(config);
+
+        using var watcher = new FileSystemWatcher(Root, "*.pdf")
+        {
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+            IncludeSubdirectories = false,
+            EnableRaisingEvents = true,
+        };
+        watcher.Created += (_, e) => TryPickup(e.FullPath);
+        watcher.Changed += (_, e) => TryPickup(e.FullPath);
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                PickupStray();
                 if (config.IsConfigured)
-                    await SweepAsync(api, ct);
+                    await UploadQueuedAsync(api, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex) { Log?.Invoke("Sweep error: " + ex.Message); }
 
-            try { await Task.Delay(TimeSpan.FromSeconds(1.5), ct); }
+            try { await Task.Delay(TimeSpan.FromSeconds(1), ct); }
             catch (OperationCanceledException) { break; }
         }
     }
 
-    private async Task SweepAsync(RelayApi api, CancellationToken ct)
+    /// <summary>Moves a finished port file into the pickup folder under a unique name.</summary>
+    private void TryPickup(string portFile)
     {
-        foreach (var file in Directory.GetFiles(SetupConfig.SpoolDir, "*.pdf"))
+        try
         {
-            if (!IsComplete(file))
-                continue; // still being written by the spooler
+            if (!IsComplete(portFile))
+                return;
+            string queueId = Path.GetFileNameWithoutExtension(portFile);
+            string dest = Path.Combine(PickupDir, $"{queueId}{Sep}{Guid.NewGuid():N}.pdf");
+            File.Move(portFile, dest);
+        }
+        catch (IOException) { /* still being written, or already moved */ }
+        catch (Exception ex) { Log?.Invoke("Pickup error: " + ex.Message); }
+    }
 
-            string queueId = Path.GetFileNameWithoutExtension(file);
+    private void PickupStray()
+    {
+        foreach (var f in Directory.GetFiles(Root, "*.pdf"))
+            TryPickup(f);
+    }
+
+    private async Task UploadQueuedAsync(RelayApi api, CancellationToken ct)
+    {
+        foreach (var file in Directory.GetFiles(PickupDir, "*.pdf"))
+        {
+            string name = Path.GetFileNameWithoutExtension(file);
+            int sep = name.IndexOf(Sep, StringComparison.Ordinal);
+            string queueId = sep > 0 ? name[..sep] : name;
+
             try
             {
                 await api.PrintAsync(queueId, file, ct);
@@ -52,7 +92,6 @@ public sealed class Uploader(SetupConfig config)
             }
             catch (HttpRequestException ex) when (ex.StatusCode is { } sc && (int)sc is >= 400 and < 500)
             {
-                // Permanent (e.g. unknown queue): set aside so we don't loop forever.
                 string bad = file + ".failed";
                 TryDelete(bad);
                 try { File.Move(file, bad); } catch { }
@@ -60,7 +99,6 @@ public sealed class Uploader(SetupConfig config)
             }
             catch (Exception ex)
             {
-                // Transient (network/relay down): leave the file and retry next sweep.
                 Log?.Invoke($"Upload of \"{queueId}\" failed, will retry: {ex.Message}");
             }
         }
