@@ -1,9 +1,6 @@
-using AxoPrint.Ipp;
 using AxoPrint.Relay;
-using AxoPrint.Relay.Ipp;
 using AxoPrint.Relay.Stores;
 using AxoPrint.Shared;
-using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,37 +10,11 @@ builder.Host.UseSystemd();
 builder.Services.AddSingleton<TokenAuth>();
 builder.Services.AddSingleton<PrinterRegistry>();
 builder.Services.AddSingleton<JobStore>();
-builder.Services.AddSingleton<IppProcessor>();
 
-// IPP documents can be large; allow big bodies and disable buffering limits.
+// Print documents can be large; allow big request bodies.
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = 512L * 1024 * 1024);
 
 var app = builder.Build();
-
-const string IppContentType = "application/ipp";
-
-// Log every request that touches the IPP path (method, status, content-type,
-// user-agent) so we can see exactly what the Windows IPP client does. The token
-// in the path is truncated.
-var ippLog = app.Logger;
-app.Use(async (ctx, next) =>
-{
-    bool isIpp = ctx.Request.Path.StartsWithSegments("/ipp");
-    if (isIpp)
-    {
-        string path = ctx.Request.Path.Value ?? "";
-        // /ipp/<token>/printers/<queue> → mask the token segment.
-        var parts = path.Split('/');
-        if (parts.Length > 2 && parts[2].Length > 6) parts[2] = parts[2][..6] + "…";
-        ippLog.LogInformation("IPP → {Method} {Path} ua=\"{UA}\" ct={CT}",
-            ctx.Request.Method, string.Join('/', parts),
-            ctx.Request.Headers.UserAgent.ToString(),
-            ctx.Request.ContentType ?? "-");
-    }
-    await next();
-    if (isIpp)
-        ippLog.LogInformation("IPP ← {Status} {CT}", ctx.Response.StatusCode, ctx.Response.ContentType ?? "-");
-});
 
 // ----- Status page -------------------------------------------------------
 app.MapGet("/", (PrinterRegistry reg) =>
@@ -56,49 +27,6 @@ app.MapGet("/", (PrinterRegistry reg) =>
         Printers:
         {string.Join('\n', lines)}
         """, "text/plain");
-});
-
-// ----- IPP endpoint ------------------------------------------------------
-// Windows connects to https://host/ipp/<token>/printers/<queue>.
-app.MapPost("/ipp/{token}/printers/{queue}", async (
-    string token, string queue,
-    HttpContext ctx, TokenAuth auth, IppProcessor processor, IConfiguration config,
-    CancellationToken ct) =>
-{
-    if (!auth.IsValid(token))
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
-
-    // IppReader reads the body synchronously; permit it for this endpoint so we
-    // can stream the document straight to disk instead of buffering it.
-    if (ctx.Features.Get<IHttpBodyControlFeature>() is { } bodyControl)
-        bodyControl.AllowSynchronousIO = true;
-
-    IppRequest request;
-    try
-    {
-        request = (IppRequest)IppReader.Read(ctx.Request.Body); // body now at document data
-    }
-    catch (Exception)
-    {
-        return Results.BadRequest("Malformed IPP request.");
-    }
-
-    string printerUri = BuildPrinterUri(ctx, config, token, queue);
-    var response = await processor.ProcessAsync(request, ctx.Request.Body, queue, printerUri, ct);
-
-    ctx.Response.ContentType = IppContentType;
-    await ctx.Response.Body.WriteAsync(IppWriter.Encode(response), ct);
-    return Results.Empty;
-});
-
-// Some IPP clients probe the printer URI with a GET before sending IPP; answer
-// 200 so they don't conclude the printer is missing.
-app.MapMethods("/ipp/{token}/printers/{queue}", new[] { "GET", "HEAD" }, (
-    string token, string queue, TokenAuth auth) =>
-{
-    if (!auth.IsValid(token))
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
-    return Results.Text($"AxoPrint IPP printer: {queue}", "text/plain");
 });
 
 // ----- Sender print API: submit a PDF for a queue (used by the client) ---
@@ -214,30 +142,7 @@ agent.MapPost("/jobs/{id:int}/status", (
 
 app.Run();
 
-static string BuildPrinterUri(HttpContext ctx, IConfiguration config, string token, string queue)
-{
-    // Prefer a configured public base (e.g. https://print.example.com); else use the request host.
-    string? configured = config["Axo:BaseUri"];
-    string scheme, host;
-    if (!string.IsNullOrWhiteSpace(configured))
-    {
-        var baseUri = new Uri(configured);
-        scheme = baseUri.Scheme;
-        host = baseUri.Authority;
-    }
-    else
-    {
-        scheme = ctx.Request.Scheme;
-        host = ctx.Request.Host.Value ?? "localhost";
-    }
-
-    // IPP printer URIs use the ipp/ipps scheme regardless of the HTTP transport.
-    string ippScheme = scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "ipps" : "ipp";
-    return $"{ippScheme}://{host}/ipp/{token}/printers/{queue}";
-}
-
-// The Windows IPP class driver POSTs to the HTTP(S) transport URL, so the
-// printer port uses the http/https scheme (not ipp://).
+// Builds the relay base URL shown to the client for reference.
 static string BuildClientUrl(HttpContext ctx, IConfiguration config, string token, string queue)
 {
     string? configured = config["Axo:BaseUri"];

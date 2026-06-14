@@ -21,7 +21,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AxoPrint.Relay\AxoPrint.Relay.csproj" />
-    <ProjectReference Include="..\..\src\AxoPrint.Ipp\AxoPrint.Ipp.csproj" />
     <ProjectReference Include="..\..\src\AxoPrint.Shared\AxoPrint.Shared.csproj" />
   </ItemGroup>
 
