@@ -101,6 +101,26 @@ app.MapMethods("/ipp/{token}/printers/{queue}", new[] { "GET", "HEAD" }, (
     return Results.Text($"AxoPrint IPP printer: {queue}", "text/plain");
 });
 
+// ----- Sender print API: submit a PDF for a queue (used by the client) ---
+app.MapPost("/api/print/{queueId}", async (
+    string queueId, HttpContext ctx, TokenAuth auth, PrinterRegistry reg, JobStore jobs,
+    string? jobName, int? copies, CancellationToken ct) =>
+{
+    if (!auth.IsValidBearer(ctx.Request.Headers.Authorization))
+        return Results.Unauthorized();
+    if (reg.Get(queueId) is null)
+        return Results.NotFound(new { error = "unknown queue" });
+
+    var job = jobs.Create(queueId, jobName ?? "Document", "", "application/pdf",
+        Math.Clamp(copies ?? 1, 1, 999), duplex: false, color: true, media: "");
+
+    await using (var f = File.Create(jobs.DocumentPath(job.Id)))
+        await ctx.Request.Body.CopyToAsync(f, ct);
+    jobs.Commit(job, new FileInfo(jobs.DocumentPath(job.Id)).Length);
+
+    return Results.Ok(new { jobId = job.Id });
+});
+
 // ----- Sender setup API: list printers to add to Windows -----------------
 app.MapGet("/api/printers", (HttpContext ctx, TokenAuth auth, PrinterRegistry reg, IConfiguration config) =>
 {

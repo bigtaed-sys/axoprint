@@ -26,4 +26,15 @@ public partial class MainWindow : Window
         if (DataContext is MainViewModel vm)
             await vm.AddSelectedAsync();
     }
+
+    // Closing hides to tray so the uploader keeps forwarding print jobs.
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (!App.IsExiting)
+        {
+            e.Cancel = true;
+            Hide();
+        }
+        base.OnClosing(e);
+    }
 }

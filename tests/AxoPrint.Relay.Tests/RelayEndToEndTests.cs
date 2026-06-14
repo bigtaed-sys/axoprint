@@ -110,6 +110,27 @@ public class RelayEndToEndTests : IClassFixture<RelayFactory>
     }
 
     [Fact]
+    public async Task RestPrint_Queues_Pdf_And_Agent_Pulls_It()
+    {
+        await RegisterPrinter();
+        byte[] pdf = "%PDF-1.4 rest job"u8.ToArray();
+
+        var content = new ByteArrayContent(pdf);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+        var resp = await Authed().PostAsync($"/api/print/{Queue}?jobName=Report&copies=3", content);
+        resp.EnsureSuccessStatusCode();
+
+        var envelope = await Authed().GetFromJsonAsync<JobEnvelope>("/api/agent/jobs/next?wait=5");
+        Assert.NotNull(envelope);
+        Assert.Equal(Queue, envelope!.QueueId);
+        Assert.Equal("Report", envelope.JobName);
+        Assert.Equal(3, envelope.Copies);
+
+        var doc = await Authed().GetByteArrayAsync($"/api/agent/jobs/{envelope.JobId}/document");
+        Assert.Equal(pdf, doc);
+    }
+
+    [Fact]
     public async Task PrintJob_Queues_Document_And_Agent_Pulls_It()
     {
         await RegisterPrinter();

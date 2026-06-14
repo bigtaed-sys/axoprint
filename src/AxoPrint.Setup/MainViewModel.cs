@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using AxoPrint.Setup.Services;
 
 namespace AxoPrint.Setup;
@@ -13,11 +14,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
 {
     private readonly SetupConfig _config;
 
-    public MainViewModel(SetupConfig config)
+    public MainViewModel(SetupConfig config, Uploader uploader)
     {
         _config = config;
         _relayBaseUrl = config.RelayBaseUrl;
         _token = config.Token;
+        uploader.Log += line => Dispatcher.UIThread.Post(() => AppendLog(line));
     }
 
     public ObservableCollection<PrinterRow> Printers { get; } = new();
@@ -30,6 +32,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private string _status = "Enter the relay URL and token, then Connect.";
     public string Status { get => _status; private set => Set(ref _status, value); }
+
+    private string _log = "";
+    public string Log { get => _log; private set => Set(ref _log, value); }
 
     private bool _busy;
     public bool Busy { get => _busy; private set { Set(ref _busy, value); OnPropertyChanged(nameof(NotBusy)); } }
@@ -58,15 +63,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     QueueId = p.QueueId,
                     DisplayName = p.DisplayName,
                     Url = p.Url,
-                    Installed = installed.Contains(p.DisplayName),
+                    Installed = installed.Contains(WindowsInstaller.PrinterName(p.DisplayName)),
                     AgentOnline = p.AgentOnline,
                 });
             }
 
             Status = items.Count == 0
                 ? "Connected, but the agent has not registered any printers yet."
-                : $"Found {items.Count} printer(s)." +
-                  (items.Any(i => i.AgentOnline) ? "" : " (agent currently offline)");
+                : $"Found {items.Count} printer(s)." + (items.Any(i => i.AgentOnline) ? "" : " (agent offline)");
         }
         catch (Exception ex)
         {
@@ -95,12 +99,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
             foreach (var row in chosen)
             {
                 Status = $"Adding \"{row.DisplayName}\"…";
-                var (success, output) = await WindowsInstaller.AddPrinterAsync(
-                    row.DisplayName, row.Url, CancellationToken.None);
+                string portFile = SetupConfig.PortFileFor(row.QueueId);
+                var (success, output) = await WindowsInstaller.AddLocalPrinterAsync(
+                    row.DisplayName, portFile, CancellationToken.None);
                 if (success)
                 {
                     row.Installed = true;
                     ok++;
+                    AppendLog($"Installed printer \"AxoPrint: {row.DisplayName}\".");
                 }
                 else
                 {
@@ -108,7 +114,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     return;
                 }
             }
-            Status = $"Added {ok} printer(s) to Windows. Try printing to one of them.";
+            Status = $"Added {ok} printer(s). Print to \"AxoPrint: …\" from any app; keep this app running.";
         }
         catch (Exception ex)
         {
@@ -118,6 +124,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             Busy = false;
         }
+    }
+
+    private void AppendLog(string line)
+    {
+        string stamped = $"[{DateTime.Now:HH:mm:ss}] {line}";
+        Log = string.IsNullOrEmpty(Log) ? stamped : stamped + "\n" + Log;
+        if (Log.Length > 16000) Log = Log[..16000];
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing.Printing;
+using System.IO;
 using System.Linq;
 using System.Runtime.Versioning;
 using System.Text;
@@ -11,47 +12,60 @@ using System.Threading.Tasks;
 namespace AxoPrint.Setup.Services;
 
 /// <summary>
-/// Adds/removes IPP printers in Windows via <c>Add-Printer -IppURL</c>. This is
-/// the supported path for driverless IPP Everywhere: Windows auto-selects the
-/// in-box "Microsoft IPP Class Driver", no port or driver is specified, and it
-/// works under Windows Protected Print Mode (unlike -PortName/-DriverName or
-/// AddPrinterConnection2, which fail for an HTTP(S) URL).
+/// Creates local Windows printers using the in-box "Microsoft Print to PDF"
+/// driver, with a Local Port pointing at a file. Printing to one produces a PDF
+/// silently in the spool folder, which the uploader then forwards to the relay.
+/// No custom driver, no IPP-over-WAN, no print-policy issues.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class WindowsInstaller
 {
+    private const string Driver = "Microsoft Print To PDF";
+
+    public static string PrinterName(string displayName) => "AxoPrint: " + displayName;
+
     public static IReadOnlySet<string> InstalledPrinterNames() =>
         PrinterSettings.InstalledPrinters.Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    public static Task<(bool Ok, string Output)> AddPrinterAsync(
-        string displayName, string url, CancellationToken ct)
+    /// <summary>Creates/updates a local PDF printer whose output goes to <paramref name="portFile"/>.</summary>
+    public static Task<(bool Ok, string Output)> AddLocalPrinterAsync(
+        string displayName, string portFile, CancellationToken ct)
     {
-        // Add-Printer expects the IPP scheme (ipp/ipps), not http/https.
-        string ippUrl = ToIppScheme(url);
-        string script =
+        Directory.CreateDirectory(Path.GetDirectoryName(portFile)!);
+
+        string vars =
             "$ErrorActionPreference = 'Stop'\n" +
-            "Add-Printer -IppURL " + PsString(ippUrl) + "\n" +
-            "Write-Output 'OK'\n";
-        return RunPowerShellAsync(script, ct);
+            "$name = " + PsString(PrinterName(displayName)) + "\n" +
+            "$port = " + PsString(portFile) + "\n" +
+            "$driver = " + PsString(Driver) + "\n";
+
+        const string body = """
+            if (-not (Get-PrinterPort -Name $port -ErrorAction SilentlyContinue)) {
+                Add-PrinterPort -Name $port
+            }
+            if (Get-Printer -Name $name -ErrorAction SilentlyContinue) {
+                Set-Printer -Name $name -PortName $port
+            } else {
+                Add-Printer -Name $name -DriverName $driver -PortName $port
+            }
+            Write-Output "OK"
+            """;
+        return RunPowerShellAsync(vars + body, ct);
     }
 
     public static Task<(bool Ok, string Output)> RemovePrinterAsync(
-        string displayName, CancellationToken ct)
+        string displayName, string portFile, CancellationToken ct)
     {
-        string script =
-            "$ErrorActionPreference = 'Stop'\n" +
-            "Remove-Printer -Name " + PsString(displayName) + "\n" +
-            "Write-Output 'removed'\n";
-        return RunPowerShellAsync(script, ct);
-    }
-
-    private static string ToIppScheme(string url)
-    {
-        if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            return "ipps://" + url["https://".Length..];
-        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-            return "ipp://" + url["http://".Length..];
-        return url;
+        string vars =
+            "$ErrorActionPreference = 'SilentlyContinue'\n" +
+            "$name = " + PsString(PrinterName(displayName)) + "\n" +
+            "$port = " + PsString(portFile) + "\n";
+        const string body = """
+            Remove-Printer -Name $name
+            Remove-PrinterPort -Name $port
+            Write-Output "removed"
+            """;
+        return RunPowerShellAsync(vars + body, ct);
     }
 
     private static async Task<(bool Ok, string Output)> RunPowerShellAsync(string script, CancellationToken ct)
@@ -76,16 +90,10 @@ public static class WindowsInstaller
         proc.Start();
         string stdout = await proc.StandardOutput.ReadToEndAsync(ct);
         string stderr = await proc.StandardError.ReadToEndAsync(ct);
+        await proc.WaitForExitAsync(ct);
 
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(90));
-        try { await proc.WaitForExitAsync(timeout.Token); }
-        catch (OperationCanceledException) { try { proc.Kill(true); } catch { } }
-
-        string output = (stdout + " " + stderr).Trim();
-        return (proc.ExitCode == 0, output);
+        return (proc.ExitCode == 0, (stdout + " " + stderr).Trim());
     }
 
-    /// <summary>Quotes a value as a single-quoted PowerShell string literal.</summary>
     private static string PsString(string value) => "'" + value.Replace("'", "''") + "'";
 }

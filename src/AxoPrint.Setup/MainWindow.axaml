@@ -6,10 +6,10 @@
         mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="600"
         x:Class="AxoPrint.Setup.MainWindow"
         x:DataType="vm:MainViewModel"
-        Width="600" Height="600"
+        Width="600" Height="680"
         Title="AxoPrint — Add Remote Printers">
 
-    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="16" RowSpacing="12">
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="16" RowSpacing="12">
 
         <StackPanel Grid.Row="0" Spacing="2">
             <TextBlock Text="AxoPrint" FontSize="20" FontWeight="SemiBold" />
@@ -52,5 +52,12 @@
                 IsEnabled="{Binding NotBusy}" Click="OnAddClick" />
 
         <TextBlock Grid.Row="4" Text="{Binding Status}" TextWrapping="Wrap" Foreground="#2563EB" />
+
+        <Border Grid.Row="5" Height="130" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6">
+            <ScrollViewer Padding="8">
+                <TextBlock Text="{Binding Log}" FontFamily="Cascadia Code,Consolas,monospace"
+                           FontSize="12" TextWrapping="Wrap" />
+            </ScrollViewer>
+        </Border>
     </Grid>
 </Window>
