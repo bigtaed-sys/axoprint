@@ -121,6 +121,17 @@ app.MapPost("/api/print/{queueId}", async (
     return Results.Ok(new { jobId = job.Id });
 });
 
+// ----- Sender API: poll a job's status (client shows printed/failed) -----
+app.MapGet("/api/jobs/{id:int}/status", (int id, HttpContext ctx, TokenAuth auth, JobStore jobs) =>
+{
+    if (!auth.IsValidBearer(ctx.Request.Headers.Authorization))
+        return Results.Unauthorized();
+    var job = jobs.Get(id);
+    if (job is null)
+        return Results.NotFound();
+    return Results.Ok(new { state = job.State.ToString(), message = job.StateMessage });
+});
+
 // ----- Sender setup API: list printers to add to Windows -----------------
 app.MapGet("/api/printers", (HttpContext ctx, TokenAuth auth, PrinterRegistry reg, IConfiguration config) =>
 {

@@ -28,8 +28,8 @@ public sealed class RelayApi(SetupConfig config)
         return items ?? new List<PrinterListItem>();
     }
 
-    /// <summary>Uploads a spooled PDF to the relay as a print job for the queue.</summary>
-    public async Task PrintAsync(string queueId, string filePath, PrinterOptions options, CancellationToken ct)
+    /// <summary>Uploads a spooled PDF to the relay; returns the created job id.</summary>
+    public async Task<int> PrintAsync(string queueId, string filePath, PrinterOptions options, CancellationToken ct)
     {
         using var http = Http();
         await using var fs = File.OpenRead(filePath);
@@ -42,5 +42,23 @@ public sealed class RelayApi(SetupConfig config)
             $"&color={(options.Monochrome ? "false" : "true")}";
         var resp = await http.PostAsync($"api/print/{queueId}?{query}", content, ct);
         resp.EnsureSuccessStatusCode();
+
+        var result = await resp.Content.ReadFromJsonAsync<PrintResult>(ct);
+        return result?.JobId ?? 0;
     }
+
+    /// <summary>Returns (state, message) for a job, or null if not found.</summary>
+    public async Task<(string State, string? Message)?> GetJobStatusAsync(int jobId, CancellationToken ct)
+    {
+        using var http = Http();
+        http.Timeout = TimeSpan.FromSeconds(15);
+        var resp = await http.GetAsync($"api/jobs/{jobId}/status", ct);
+        if (!resp.IsSuccessStatusCode)
+            return null;
+        var s = await resp.Content.ReadFromJsonAsync<JobStatus>(ct);
+        return s is null ? null : (s.State, s.Message);
+    }
+
+    private sealed record PrintResult(int JobId);
+    private sealed record JobStatus(string State, string? Message);
 }

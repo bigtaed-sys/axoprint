@@ -86,9 +86,11 @@ public sealed class Uploader(SetupConfig config)
 
             try
             {
-                await api.PrintAsync(queueId, file, config.OptionsFor(queueId), ct);
+                int jobId = await api.PrintAsync(queueId, file, config.OptionsFor(queueId), ct);
                 TryDelete(file);
                 Log?.Invoke($"Sent print job to \"{queueId}\".");
+                if (jobId > 0)
+                    _ = TrackAsync(api, jobId, queueId, ct);
             }
             catch (HttpRequestException ex) when (ex.StatusCode is { } sc && (int)sc is >= 400 and < 500)
             {
@@ -102,6 +104,27 @@ public sealed class Uploader(SetupConfig config)
                 Log?.Invoke($"Upload of \"{queueId}\" failed, will retry: {ex.Message}");
             }
         }
+    }
+
+    /// <summary>Polls the relay until the agent reports the job done, and logs the outcome.</summary>
+    private async Task TrackAsync(RelayApi api, int jobId, string queueId, CancellationToken ct)
+    {
+        try
+        {
+            for (int i = 0; i < 30 && !ct.IsCancellationRequested; i++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                var s = await api.GetJobStatusAsync(jobId, ct);
+                switch (s?.State)
+                {
+                    case "Completed": Log?.Invoke($"✓ \"{queueId}\" printed."); return;
+                    case "Aborted": Log?.Invoke($"✗ \"{queueId}\" failed: {s.Value.Message}"); return;
+                    case "Canceled": Log?.Invoke($"\"{queueId}\" canceled."); return;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Log?.Invoke("Status check error: " + ex.Message); }
     }
 
     /// <summary>True once the spooler has released the file (write finished).</summary>
