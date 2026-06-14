@@ -17,7 +17,7 @@
         </StackPanel>
 
         <Border Grid.Row="1" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12">
-            <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+            <Grid ColumnDefinitions="120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Relay URL" VerticalAlignment="Center" />
                 <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding RelayBaseUrl}"
                          PlaceholderText="https://print.example.com" />
@@ -34,6 +34,9 @@
 
                 <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SaveHint}"
                            Foreground="#22A06B" FontSize="12" />
+
+                <CheckBox Grid.Row="5" Grid.Column="1" Content="Запускать при входе в Windows"
+                          IsChecked="{Binding RunAtStartup}" />
             </Grid>
         </Border>
 

@@ -40,6 +40,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool Busy { get => _busy; private set { Set(ref _busy, value); OnPropertyChanged(nameof(NotBusy)); } }
     public bool NotBusy => !_busy;
 
+    private bool _runAtStartup = StartupManager.IsEnabled();
+    public bool RunAtStartup
+    {
+        get => _runAtStartup;
+        set
+        {
+            if (_runAtStartup == value) return;
+            var (ok, output) = StartupManager.SetEnabled(value);
+            if (ok)
+            {
+                _runAtStartup = value;
+                Status = value ? "Autostart enabled." : "Autostart disabled.";
+            }
+            else
+            {
+                Status = "Autostart failed: " + output;
+            }
+            OnPropertyChanged(nameof(RunAtStartup));
+        }
+    }
+
     public async Task ConnectAsync()
     {
         if (Busy) return;

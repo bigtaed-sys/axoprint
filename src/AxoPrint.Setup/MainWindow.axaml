@@ -48,8 +48,12 @@
             </ListBox>
         </Border>
 
-        <Button Grid.Row="3" Content="Add selected to Windows" HorizontalAlignment="Left"
-                IsEnabled="{Binding NotBusy}" Click="OnAddClick" />
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="16">
+            <Button Content="Add selected to Windows"
+                    IsEnabled="{Binding NotBusy}" Click="OnAddClick" />
+            <CheckBox Content="Запускать при входе" VerticalAlignment="Center"
+                      IsChecked="{Binding RunAtStartup}" />
+        </StackPanel>
 
         <TextBlock Grid.Row="4" Text="{Binding Status}" TextWrapping="Wrap" Foreground="#2563EB" />
 

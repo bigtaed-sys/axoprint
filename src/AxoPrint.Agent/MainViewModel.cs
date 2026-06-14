@@ -44,6 +44,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _saveHint = "";
     public string SaveHint { get => _saveHint; private set => Set(ref _saveHint, value); }
 
+    private bool _runAtStartup = StartupManager.IsEnabled();
+    public bool RunAtStartup
+    {
+        get => _runAtStartup;
+        set
+        {
+            if (_runAtStartup == value) return;
+            var (ok, output) = StartupManager.SetEnabled(value);
+            if (ok)
+            {
+                _runAtStartup = value;
+                SaveHint = value ? "Autostart enabled." : "Autostart disabled.";
+            }
+            else
+            {
+                SaveHint = "Autostart failed: " + output;
+            }
+            OnPropertyChanged(nameof(RunAtStartup));
+        }
+    }
+
     /// <summary>Persists edited settings and reconnects the worker.</summary>
     public void Save()
     {
@@ -77,6 +98,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged(string name) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
     private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
