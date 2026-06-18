@@ -98,9 +98,19 @@ public static class PrinterAttributes
         A(IppAttribute.Keyword("media-default", Media[0].Name));
         A(IppAttribute.Keyword("media-supported", Media.Select(m => m.Name).ToArray()));
         A(IppAttribute.Keyword("media-ready", Media[0].Name));
-        A(IppAttribute.Keyword("media-col-supported", "media-size", "media-type", "media-source"));
+        A(IppAttribute.Keyword("media-col-supported",
+            "media-size", "media-type", "media-source",
+            "media-top-margin", "media-bottom-margin", "media-left-margin", "media-right-margin"));
         A(IppAttribute.Keyword("media-type-supported", "stationery"));
         A(IppAttribute.Keyword("media-source-supported", "auto"));
+        // Margins (hundredths of a mm). CUPS' "everywhere" PPD generator needs the
+        // supported-margin attributes + margins inside media-col to compute the
+        // printable area, else lpadmin fails with "does not support required IPP
+        // attributes". Advertise borderless (0) and a normal ~4.2 mm margin.
+        A(IppAttribute.Integer("media-bottom-margin-supported", 0, Margin));
+        A(IppAttribute.Integer("media-top-margin-supported", 0, Margin));
+        A(IppAttribute.Integer("media-left-margin-supported", 0, Margin));
+        A(IppAttribute.Integer("media-right-margin-supported", 0, Margin));
         A(new IppAttribute("media-col-default", IppValue.Collection(MediaCol(Media[0]))));
         A(new IppAttribute("media-col-database",
             Media.Select(m => IppValue.Collection(MediaCol(m))).ToArray()));
@@ -141,6 +151,9 @@ public static class PrinterAttributes
         return Filter(all, requested);
     }
 
+    // Normal print margin in hundredths of a mm (~4.2 mm).
+    private const int Margin = 423;
+
     private static IppCollection MediaCol((string Name, int X, int Y) m) =>
         new IppCollection()
             .Add(new IppAttribute("media-size", IppValue.Collection(
@@ -148,7 +161,11 @@ public static class PrinterAttributes
                     .Add(IppAttribute.Integer("x-dimension", m.X))
                     .Add(IppAttribute.Integer("y-dimension", m.Y)))))
             .Add(IppAttribute.Keyword("media-type", "stationery"))
-            .Add(IppAttribute.Keyword("media-source", "auto"));
+            .Add(IppAttribute.Keyword("media-source", "auto"))
+            .Add(IppAttribute.Integer("media-top-margin", Margin))
+            .Add(IppAttribute.Integer("media-bottom-margin", Margin))
+            .Add(IppAttribute.Integer("media-left-margin", Margin))
+            .Add(IppAttribute.Integer("media-right-margin", Margin));
 
     private static IppAttributeGroup Filter(IppAttributeGroup group, IReadOnlyCollection<string>? requested)
     {
