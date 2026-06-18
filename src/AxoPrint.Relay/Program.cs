@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using AxoPrint.Ipp;
 using AxoPrint.Relay;
 using AxoPrint.Relay.Ipp;
@@ -15,10 +17,14 @@ builder.Services.AddSingleton<PrinterRegistry>();
 builder.Services.AddSingleton<JobStore>();
 builder.Services.AddSingleton<IppProcessor>();
 
-// IPP documents can be large; allow big bodies and disable buffering limits.
+// Documents/uploads can be large; allow big bodies and multipart forms.
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = 512L * 1024 * 1024);
+builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 512L * 1024 * 1024);
 
 var app = builder.Build();
+
+// Optional web upload UI: enabled when a password is configured (Axo:WebPassword).
+string webPassword = app.Configuration["Axo:WebPassword"] ?? "";
 
 const string IppContentType = "application/ipp";
 
@@ -45,17 +51,82 @@ app.Use(async (ctx, next) =>
         ippLog.LogInformation("IPP ← {Status} {CT}", ctx.Response.StatusCode, ctx.Response.ContentType ?? "-");
 });
 
-// ----- Status page -------------------------------------------------------
-app.MapGet("/", (PrinterRegistry reg) =>
+// ----- Web upload UI / status page ---------------------------------------
+app.MapGet("/", (HttpContext ctx, PrinterRegistry reg) =>
 {
-    var lines = reg.All.Select(p => $"  • {p.DisplayName} (queue: {p.QueueId})");
-    return Results.Text(
-        $"""
-        AxoPrint relay
-        Agent: {(reg.AgentOnline ? "online" : "offline")} (last seen {reg.LastSeen:u})
-        Printers:
-        {string.Join('\n', lines)}
-        """, "text/plain");
+    if (string.IsNullOrEmpty(webPassword))
+    {
+        var lines = reg.All.Select(p => $"  • {p.DisplayName} (queue: {p.QueueId})");
+        return Results.Text(
+            $"""
+            AxoPrint relay
+            Agent: {(reg.AgentOnline ? "online" : "offline")} (last seen {reg.LastSeen:u})
+            Printers:
+            {string.Join('\n', lines)}
+            """, "text/plain");
+    }
+
+    return WebAuthed(ctx, webPassword)
+        ? Results.Content(WebUi.Panel(reg, null), "text/html; charset=utf-8")
+        : Results.Content(WebUi.Login(null), "text/html; charset=utf-8");
+});
+
+app.MapPost("/web/login", async (HttpContext ctx) =>
+{
+    if (string.IsNullOrEmpty(webPassword))
+        return Results.NotFound();
+    var form = await ctx.Request.ReadFormAsync();
+    string entered = form["password"].ToString();
+    if (CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(entered), Encoding.UTF8.GetBytes(webPassword)))
+    {
+        ctx.Response.Cookies.Append("axo_web", WebHash(webPassword), new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            MaxAge = TimeSpan.FromDays(30),
+        });
+        return Results.Redirect("/");
+    }
+    return Results.Content(WebUi.Login("Неверный пароль"), "text/html; charset=utf-8");
+});
+
+app.MapGet("/web/logout", (HttpContext ctx) =>
+{
+    ctx.Response.Cookies.Delete("axo_web");
+    return Results.Redirect("/");
+});
+
+app.MapPost("/web/print", async (HttpContext ctx, PrinterRegistry reg, JobStore jobs, CancellationToken ct) =>
+{
+    if (!WebAuthed(ctx, webPassword))
+        return Results.Redirect("/");
+
+    var form = await ctx.Request.ReadFormAsync(ct);
+    string queueId = form["queue"].ToString();
+    if (reg.Get(queueId) is null)
+        return Results.Content(WebUi.Panel(reg, "Неизвестный принтер."), "text/html; charset=utf-8");
+
+    var file = form.Files["file"];
+    if (file is null || file.Length == 0)
+        return Results.Content(WebUi.Panel(reg, "Выберите файл."), "text/html; charset=utf-8");
+
+    string? format = WebUi.FormatFor(file.FileName);
+    if (format is null)
+        return Results.Content(WebUi.Panel(reg, "Поддерживаются PDF, JPG, PNG."), "text/html; charset=utf-8");
+
+    int copies = int.TryParse(form["copies"], out var c) ? Math.Clamp(c, 1, 99) : 1;
+    bool duplex = form["duplex"] == "on";
+    bool color = form["mono"] != "on";
+
+    var job = jobs.Create(queueId, file.FileName, "web", format, copies, duplex, color, "");
+    await using (var f = File.Create(jobs.DocumentPath(job.Id)))
+        await file.CopyToAsync(f, ct);
+    jobs.Commit(job, file.Length);
+
+    return Results.Content(
+        WebUi.Panel(reg, $"Отправлено: «{file.FileName}» → задание #{job.Id}."), "text/html; charset=utf-8");
 });
 
 // ----- IPP endpoint ------------------------------------------------------
@@ -213,6 +284,18 @@ agent.MapPost("/jobs/{id:int}/status", (
 });
 
 app.Run();
+
+// Cookie value proving web auth: a hash of the password (not the password itself).
+static string WebHash(string pw) =>
+    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("axoweb:" + pw)));
+
+static bool WebAuthed(HttpContext ctx, string pw)
+{
+    if (string.IsNullOrEmpty(pw)) return false;
+    return ctx.Request.Cookies.TryGetValue("axo_web", out var v) && v is not null &&
+        CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(v), Encoding.UTF8.GetBytes(WebHash(pw)));
+}
 
 static string BuildPrinterUri(HttpContext ctx, IConfiguration config, string token, string queue)
 {

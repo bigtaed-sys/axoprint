@@ -57,6 +57,14 @@ else
     GENERATED_TOKEN=0
 fi
 
+# Web upload UI password (env AXO_WEBPASS). If empty, keep any value from a
+# previous install so re-running doesn't wipe it; empty overall = UI disabled.
+UNIT_FILE="/etc/systemd/system/$SERVICE.service"
+WEBPASS="${AXO_WEBPASS:-}"
+if [[ -z "$WEBPASS" && -f "$UNIT_FILE" ]]; then
+    WEBPASS="$(grep -oP 'AXO__WEBPASSWORD=\K.*' "$UNIT_FILE" || true)"
+fi
+
 log() { echo -e "\n\033[1;34m==>\033[0m \033[1m$*\033[0m"; }
 
 # ----------------------------------------------------- detect package family
@@ -123,6 +131,7 @@ Environment=DOTNET_ENVIRONMENT=Production
 Environment=AXO__TOKEN=$TOKEN
 Environment=AXO__BASEURI=https://$DOMAIN
 Environment=AXO__DATADIR=$DATA_DIR
+Environment=AXO__WEBPASSWORD=$WEBPASS
 
 # Hardening. StateDirectory creates $DATA_DIR (under /var/lib) owned by the
 # dynamic user and makes it writable even with ProtectSystem=strict.
@@ -212,6 +221,11 @@ echo "  URL:    https://$DOMAIN"
 echo "  Token:  $TOKEN"
 if [[ "$GENERATED_TOKEN" -eq 1 ]]; then
     echo "          (generated — use this same token in the Agent and Setup apps)"
+fi
+if [[ -n "$WEBPASS" ]]; then
+    echo "  Web UI: https://$DOMAIN  (password set; pick a file and print from a browser)"
+else
+    echo "  Web UI: disabled. Re-run with AXO_WEBPASS=<password> to enable browser printing."
 fi
 echo
 echo "Check it: curl -s https://$DOMAIN/   (allow a minute for the TLS certificate)"
