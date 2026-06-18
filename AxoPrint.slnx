@@ -1,11 +1,14 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/AxoPrint.Agent/AxoPrint.Agent.csproj" />
+    <Project Path="src/AxoPrint.Ipp/AxoPrint.Ipp.csproj" />
+    <Project Path="src/AxoPrint.LinuxClient/AxoPrint.LinuxClient.csproj" />
     <Project Path="src/AxoPrint.Relay/AxoPrint.Relay.csproj" />
     <Project Path="src/AxoPrint.Setup/AxoPrint.Setup.csproj" />
     <Project Path="src/AxoPrint.Shared/AxoPrint.Shared.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AxoPrint.Ipp.Tests/AxoPrint.Ipp.Tests.csproj" />
     <Project Path="tests/AxoPrint.Relay.Tests/AxoPrint.Relay.Tests.csproj" />
   </Folder>
 </Solution>

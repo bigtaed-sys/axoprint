@@ -2,5 +2,6 @@ bin/
 obj/
 data/
 publish/
+build/
 *.user
 .vs/

@@ -25,9 +25,11 @@
 | Проект | Где работает | Назначение |
 |--------|--------------|-----------|
 | **AxoPrint.Shared** | библиотека | модели DTO relay ↔ agent ↔ client |
-| **AxoPrint.Relay** | VPS (Linux/Windows) | очередь заданий + REST API (приём PDF, выдача агенту) |
+| **AxoPrint.Relay** | VPS (Linux/Windows) | очередь заданий + REST API (приём PDF) + IPP-сервер (для CUPS/Linux) |
 | **AxoPrint.Agent** | ПК с принтером (Windows) | регистрирует принтеры, забирает задания, печатает через SumatraPDF; трей |
 | **AxoPrint.Setup** | ПК-отправитель (Windows) | создаёт локальные PDF-принтеры и форвардит их вывод на VPS; трей |
+| **AxoPrint.LinuxClient** | ПК-отправитель (Linux) | добавляет в CUPS IPP-принтеры, смотрящие на VPS (AppImage) |
+| **AxoPrint.Ipp** | библиотека | кодек IPP (RFC 8010/8011) — использует IPP-сервер релея для Linux/CUPS |
 
 ## Сборка
 
@@ -114,6 +116,32 @@ dotnet publish src/AxoPrint.Setup -c Release -r win-x64 --self-contained -o C:\A
 **Автозапуск:** ярлык в `shell:startup` или Task Scheduler («At log on», с правами админа).
 
 ---
+
+## 4. Клиент-отправитель на Linux (CUPS, AppImage)
+
+В отличие от Windows, CUPS добавляет IPP-принтер по интернет-URL штатно и без драйверов,
+поэтому на Linux отдельный аплоадер не нужен — CUPS печатает прямо на релей по IPP.
+
+Собрать AppImage (на любой Linux-машине с .NET 10 SDK):
+```bash
+git clone https://github.com/bigtaed-sys/axoprint.git
+cd axoprint
+bash deploy/appimage/build-appimage.sh      # → build/AxoPrint-x86_64.AppImage
+```
+
+Запуск:
+```bash
+chmod +x build/AxoPrint-x86_64.AppImage
+./build/AxoPrint-x86_64.AppImage
+```
+1. Впиши **Релей URL** и **Токен**, нажми **Подключить**.
+2. Отметь принтеры (при желании — «2-стор.»/«Ч/Б»), нажми **Добавить выбранные в CUPS**.
+   Появится графический запрос пароля (pkexec) — `lpadmin` требует прав.
+3. Готово: принтеры `AxoPrint_<имя>` видны в системе; печатай в них из любого приложения.
+   CUPS сам отправит задание (PDF) на релей по `ipps://…/ipp/<token>/printers/<queue>`.
+
+> Требует, чтобы на релее был включён IPP-сервер (он есть). Резидентного приложения на
+> Linux держать не надо — печать идёт через CUPS напрямую.
 
 ## Как это печатается
 

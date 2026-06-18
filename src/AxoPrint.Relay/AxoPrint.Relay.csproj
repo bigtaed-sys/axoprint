@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <ProjectReference Include="..\AxoPrint.Ipp\AxoPrint.Ipp.csproj" />
     <ProjectReference Include="..\AxoPrint.Shared\AxoPrint.Shared.csproj" />
   </ItemGroup>
 

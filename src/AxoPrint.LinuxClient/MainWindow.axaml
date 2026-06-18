@@ -1,0 +1,65 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:AxoPrint.LinuxClient"
+        mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="680"
+        x:Class="AxoPrint.LinuxClient.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Width="600" Height="680"
+        Title="AxoPrint — добавить принтеры (Linux)">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="16" RowSpacing="12">
+
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="AxoPrint" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Добавить удалённые принтеры в CUPS" Opacity="0.7" />
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12">
+            <Grid ColumnDefinitions="100,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Релей URL" VerticalAlignment="Center" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding RelayBaseUrl}"
+                         PlaceholderText="https://print.example.com" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Токен" VerticalAlignment="Center" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Token}" PasswordChar="•" />
+
+                <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="2" Content="Подключить"
+                        VerticalAlignment="Stretch" Padding="16,0"
+                        IsEnabled="{Binding NotBusy}" Click="OnConnectClick" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6">
+            <ListBox ItemsSource="{Binding Printers}" Background="Transparent">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PrinterRow">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                            <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="1">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding StatusLabel}" FontSize="12" Opacity="0.7" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
+                                <CheckBox Content="2-стор." FontSize="12" IsChecked="{Binding Duplex}" />
+                                <CheckBox Content="Ч/Б" FontSize="12" IsChecked="{Binding Monochrome}" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <Button Grid.Row="3" Content="Добавить выбранные в CUPS" HorizontalAlignment="Left"
+                IsEnabled="{Binding NotBusy}" Click="OnAddClick" />
+
+        <TextBlock Grid.Row="4" Text="{Binding Status}" TextWrapping="Wrap" Foreground="#2563EB" />
+
+        <Border Grid.Row="5" Height="130" BorderBrush="#33808080" BorderThickness="1" CornerRadius="6">
+            <ScrollViewer Padding="8">
+                <TextBlock Text="{Binding Log}" FontFamily="monospace" FontSize="12" TextWrapping="Wrap" />
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>

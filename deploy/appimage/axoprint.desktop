@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AxoPrint
+Comment=Add remote AxoPrint printers to CUPS
+Exec=AxoPrint.LinuxClient
+Icon=axoprint
+Categories=Utility;System;
+Terminal=false

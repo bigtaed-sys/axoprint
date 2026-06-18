@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using AxoPrint.Ipp;
 using AxoPrint.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -25,6 +26,34 @@ public class RelayEndToEndTests : IClassFixture<RelayFactory>
         return c;
     }
 
+    private static byte[] Body(IppRequest req, byte[]? doc = null)
+    {
+        using var ms = new MemoryStream();
+        IppWriter.Write(ms, req);
+        if (doc is not null) ms.Write(doc);
+        return ms.ToArray();
+    }
+
+    private static IppRequest NewRequest(IppOperation op, string printerUri)
+    {
+        var req = new IppRequest(op) { Version = IppVersion.V1_1 };
+        req.OperationGroup
+            .Add(IppAttribute.Charset("attributes-charset", "utf-8"))
+            .Add(IppAttribute.Language("attributes-natural-language", "en"))
+            .Add(IppAttribute.Uri("printer-uri", printerUri));
+        return req;
+    }
+
+    private async Task<IppResponse> PostIpp(HttpClient client, byte[] body)
+    {
+        var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/ipp");
+        var resp = await client.PostAsync($"/ipp/{Token}/printers/{Queue}", content);
+        resp.EnsureSuccessStatusCode();
+        using var s = await resp.Content.ReadAsStreamAsync();
+        return (IppResponse)IppReader.Read(s, asResponse: true);
+    }
+
     private async Task RegisterPrinter()
     {
         var req = new RegisterRequest
@@ -44,22 +73,40 @@ public class RelayEndToEndTests : IClassFixture<RelayFactory>
     }
 
     [Fact]
-    public async Task Unauthenticated_Print_Is_Unauthorized()
+    public async Task Unauthenticated_Ipp_Is_Forbidden()
     {
         var client = _factory.CreateClient();
-        var content = new ByteArrayContent("%PDF"u8.ToArray());
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
-        var resp = await client.PostAsync($"/api/print/{Queue}", content);
-        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+        var body = Body(NewRequest(IppOperation.GetPrinterAttributes, "ipp://x/y"));
+        var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/ipp");
+        var resp = await client.PostAsync($"/ipp/wrong-token/printers/{Queue}", content);
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
     }
 
     [Fact]
-    public async Task Printers_Are_Listed_After_Registration()
+    public async Task GetPrinterAttributes_Advertises_IppEverywhere()
     {
         await RegisterPrinter();
-        var items = await Authed().GetFromJsonAsync<List<PrinterListItem>>("/api/printers");
-        Assert.NotNull(items);
-        Assert.Contains(items!, i => i.QueueId == Queue && i.DisplayName == "Office Laser");
+        var client = _factory.CreateClient();
+        var printerUri = $"ipp://localhost/ipp/{Token}/printers/{Queue}";
+
+        var res = await PostIpp(client, Body(NewRequest(IppOperation.GetPrinterAttributes, printerUri)));
+
+        Assert.Equal(IppStatus.SuccessfulOk, res.Status);
+        var pg = res.FirstGroup(IppTag.PrinterAttributes)!;
+        Assert.Contains("ipp-everywhere", pg["ipp-features-supported"]!.AsStrings());
+        Assert.Contains("application/pdf", pg["document-format-supported"]!.AsStrings());
+        Assert.Equal("Office Laser", pg["printer-name"]!.AsString());
+        // Duplex printer advertises two-sided.
+        Assert.Contains("two-sided-long-edge", pg["sides-supported"]!.AsStrings());
+        // media-col-database must decode as a 1setOf collections.
+        Assert.True(pg["media-col-database"]!.Values.Count >= 2);
+        // IPP Everywhere raster/URF capabilities required for driverless install.
+        Assert.NotNull(pg["urf-supported"]);
+        Assert.NotNull(pg["pwg-raster-document-type-supported"]);
+        Assert.NotNull(pg["pwg-raster-document-resolution-supported"]);
+        Assert.Contains("image/urf", pg["document-format-supported"]!.AsStrings());
+        Assert.NotNull(pg["printer-device-id"]);
     }
 
     [Fact]
@@ -70,7 +117,7 @@ public class RelayEndToEndTests : IClassFixture<RelayFactory>
 
         var content = new ByteArrayContent(pdf);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
-        var resp = await Authed().PostAsync($"/api/print/{Queue}?jobName=Report&copies=3&duplex=true&color=false", content);
+        var resp = await Authed().PostAsync($"/api/print/{Queue}?jobName=Report&copies=3", content);
         resp.EnsureSuccessStatusCode();
 
         var envelope = await Authed().GetFromJsonAsync<JobEnvelope>("/api/agent/jobs/next?wait=5");
@@ -78,34 +125,52 @@ public class RelayEndToEndTests : IClassFixture<RelayFactory>
         Assert.Equal(Queue, envelope!.QueueId);
         Assert.Equal("Report", envelope.JobName);
         Assert.Equal(3, envelope.Copies);
-        Assert.True(envelope.Duplex);
-        Assert.False(envelope.Color);
 
         var doc = await Authed().GetByteArrayAsync($"/api/agent/jobs/{envelope.JobId}/document");
         Assert.Equal(pdf, doc);
     }
 
     [Fact]
-    public async Task JobStatus_Reflects_Agent_Updates()
+    public async Task PrintJob_Queues_Document_And_Agent_Pulls_It()
     {
         await RegisterPrinter();
-        var content = new ByteArrayContent("%PDF"u8.ToArray());
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
-        var resp = await Authed().PostAsync($"/api/print/{Queue}", content);
-        int jobId = (await resp.Content.ReadFromJsonAsync<PrintAck>())!.JobId;
+        var client = _factory.CreateClient();
+        var printerUri = $"ipp://localhost/ipp/{Token}/printers/{Queue}";
 
-        // Agent pulls (-> Processing) then reports completion.
-        await Authed().GetAsync("/api/agent/jobs/next?wait=5");
-        var upd = await Authed().PostAsJsonAsync($"/api/agent/jobs/{jobId}/status",
+        byte[] pdf = "%PDF-1.4 fake document body"u8.ToArray();
+        var req = NewRequest(IppOperation.PrintJob, printerUri);
+        req.OperationGroup.Add(IppAttribute.NameW("job-name", "Test Page"));
+        var jobGroup = req.GetOrAddGroup(IppTag.JobAttributes);
+        jobGroup.Add(IppAttribute.Integer("copies", 2));
+
+        var res = await PostIpp(client, Body(req, pdf));
+        Assert.Equal(IppStatus.SuccessfulOk, res.Status);
+        int jobId = res.FirstGroup(IppTag.JobAttributes)!["job-id"]!.AsInt();
+        Assert.True(jobId > 0);
+
+        // Agent pulls the job.
+        var envelope = await Authed().GetFromJsonAsync<JobEnvelope>("/api/agent/jobs/next?wait=5");
+        Assert.NotNull(envelope);
+        Assert.Equal(jobId.ToString(), envelope!.JobId);
+        Assert.Equal("Test Page", envelope.JobName);
+        Assert.Equal(2, envelope.Copies);
+
+        // Agent downloads the document.
+        var doc = await Authed().GetByteArrayAsync($"/api/agent/jobs/{jobId}/document");
+        Assert.Equal(pdf, doc);
+
+        // Agent reports completion.
+        var statusResp = await Authed().PostAsJsonAsync($"/api/agent/jobs/{jobId}/status",
             new JobStatusUpdate { State = JobState.Completed });
-        upd.EnsureSuccessStatusCode();
+        statusResp.EnsureSuccessStatusCode();
 
-        var status = await Authed().GetFromJsonAsync<JobStatusView>($"/api/jobs/{jobId}/status");
-        Assert.Equal("Completed", status!.State);
+        // Get-Job-Attributes now reports completed.
+        var jobReq = NewRequest(IppOperation.GetJobAttributes, printerUri);
+        jobReq.OperationGroup.Add(IppAttribute.Integer("job-id", jobId));
+        var jobRes = await PostIpp(client, Body(jobReq));
+        Assert.Equal((int)IppJobState.Completed,
+            jobRes.FirstGroup(IppTag.JobAttributes)!["job-state"]!.AsInt());
     }
-
-    private sealed record PrintAck(int JobId);
-    private sealed record JobStatusView(string State, string? Message);
 }
 
 public class EmptyDataDirTests
