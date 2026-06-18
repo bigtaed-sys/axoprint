@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,15 +13,18 @@ namespace AxoPrint.LinuxClient.Services;
 /// <summary>
 /// Adds/removes CUPS print queues that point at the relay over IPP Everywhere.
 /// CUPS connects to the URL directly and prints PDF — no local driver, no
-/// resident uploader. Privileged commands run via pkexec (graphical sudo).
+/// resident uploader.
+///
+/// lpadmin is run directly (works without a password if the user is in the
+/// CUPS admin group, e.g. lpadmin/sys/wheel). If that is refused, the caller
+/// falls back to a generated script the user runs once with sudo — we avoid
+/// pkexec, which needs a graphical polkit agent that isn't always present.
 /// </summary>
 public static class CupsInstaller
 {
-    /// <summary>CUPS-safe queue name for a relay queue id.</summary>
     public static string CupsName(string queueId) =>
         "AxoPrint_" + Regex.Replace(queueId, "[^A-Za-z0-9_]", "_");
 
-    /// <summary>https://… → ipps://…, http://… → ipp://… (CUPS device URI scheme).</summary>
     public static string ToIppUri(string url)
     {
         if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -39,18 +43,12 @@ public static class CupsInstaller
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    public static Task<(bool Ok, string Output)> AddAsync(
-        string queueId, string displayName, string url, bool duplex, bool monochrome, CancellationToken ct)
-    {
-        string name = CupsName(queueId);
-        string uri = ToIppUri(url);
-
-        var args = new List<string>
+    private static List<string> AddArgs(string queueId, string displayName, string url, bool duplex, bool monochrome) =>
+        new()
         {
-            Resolve("lpadmin"),
-            "-p", name,
+            "-p", CupsName(queueId),
             "-E",                          // enable + accept jobs
-            "-v", uri,
+            "-v", ToIppUri(url),
             "-m", "everywhere",            // driverless IPP Everywhere (queries the relay)
             "-D", displayName,
             "-o", "printer-is-shared=false",
@@ -58,15 +56,38 @@ public static class CupsInstaller
             "-o", monochrome ? "print-color-mode-default=monochrome" : "print-color-mode-default=color",
         };
 
-        // pkexec runs lpadmin as root after a graphical auth prompt.
-        return Task.Run(() => Run("pkexec", args), ct);
+    /// <summary>Shell command (for the manual sudo fallback / display).</summary>
+    public static string AddCommand(string queueId, string displayName, string url, bool duplex, bool monochrome) =>
+        "lpadmin " + string.Join(' ', AddArgs(queueId, displayName, url, duplex, monochrome).Select(Quote));
+
+    public static Task<(bool Ok, string Output)> AddAsync(
+        string queueId, string displayName, string url, bool duplex, bool monochrome, CancellationToken ct) =>
+        Task.Run(() => Run(Resolve("lpadmin"), AddArgs(queueId, displayName, url, duplex, monochrome)), ct);
+
+    public static Task<(bool Ok, string Output)> RemoveAsync(string queueId, CancellationToken ct) =>
+        Task.Run(() => Run(Resolve("lpadmin"), new[] { "-x", CupsName(queueId) }), ct);
+
+    /// <summary>Writes a script that adds all the given printers; user runs it with sudo.</summary>
+    public static string WriteSudoScript(IEnumerable<(string QueueId, string DisplayName, string Url, bool Duplex, bool Mono)> printers)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("#!/usr/bin/env bash");
+        sb.AppendLine("set -e");
+        foreach (var p in printers)
+            sb.AppendLine(AddCommand(p.QueueId, p.DisplayName, p.Url, p.Duplex, p.Mono));
+        sb.AppendLine("echo 'AxoPrint: printers added.'");
+
+        string dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "axoprint");
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "add-printers.sh");
+        File.WriteAllText(path, sb.ToString().Replace("\r\n", "\n"));
+        return path;
     }
 
-    public static Task<(bool Ok, string Output)> RemoveAsync(string queueId, CancellationToken ct)
-    {
-        var args = new List<string> { Resolve("lpadmin"), "-x", CupsName(queueId) };
-        return Task.Run(() => Run("pkexec", args), ct);
-    }
+    private static string Quote(string s) =>
+        s.Length > 0 && s.All(c => char.IsLetterOrDigit(c) || "-_=:./".Contains(c))
+            ? s : "'" + s.Replace("'", "'\\''") + "'";
 
     private static string Resolve(string bin)
     {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -93,6 +94,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         try
         {
             int ok = 0;
+            var failed = new List<(string QueueId, string DisplayName, string Url, bool Duplex, bool Mono)>();
             foreach (var row in chosen)
             {
                 Status = $"Добавляю «{row.DisplayName}» в CUPS…";
@@ -106,12 +108,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 }
                 else
                 {
-                    Status = $"Не удалось добавить «{row.DisplayName}»: {output}";
-                    AppendLog($"Ошибка lpadmin: {output}");
-                    return;
+                    failed.Add((row.QueueId, row.DisplayName, row.Url, row.Duplex, row.Monochrome));
+                    AppendLog($"lpadmin «{row.DisplayName}»: {output}");
                 }
             }
-            Status = $"Добавлено принтеров: {ok}. Печатайте в них из любого приложения.";
+
+            if (failed.Count == 0)
+            {
+                Status = $"Добавлено принтеров: {ok}. Печатайте в них из любого приложения.";
+            }
+            else
+            {
+                // Likely no CUPS-admin rights: hand the user a one-liner to run with sudo.
+                string script = CupsInstaller.WriteSudoScript(failed);
+                Status = $"Нет прав на {failed.Count} принтер(ов). Выполните в терминале:  sudo bash {script}";
+                AppendLog($"Команда: sudo bash {script}  (или добавьте себя в группу: sudo usermod -aG lpadmin $USER, затем перелогиньтесь)");
+            }
         }
         catch (Exception ex)
         {
