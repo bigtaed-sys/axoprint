@@ -25,13 +25,20 @@ public static class CupsInstaller
     public static string CupsName(string queueId) =>
         "AxoPrint_" + Regex.Replace(queueId, "[^A-Za-z0-9_]", "_");
 
+    /// <summary>
+    /// Converts the relay's http(s) URL to an ipp(s) device URI for CUPS, with
+    /// an EXPLICIT port. Without it CUPS would use the IPP default port 631
+    /// (true even for ipps://), but the relay is behind TLS on 443 — hence the
+    /// "host is down" errors.
+    /// </summary>
     public static string ToIppUri(string url)
     {
-        if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            return "ipps://" + url["https://".Length..];
-        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-            return "ipp://" + url["http://".Length..];
-        return url;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u))
+            return url;
+        bool tls = u.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
+        string scheme = tls ? "ipps" : "ipp";
+        int port = u.IsDefaultPort ? (tls ? 443 : 80) : u.Port;
+        return $"{scheme}://{u.Host}:{port}{u.PathAndQuery}";
     }
 
     public static IReadOnlySet<string> InstalledQueues()
